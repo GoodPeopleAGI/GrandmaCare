@@ -1,0 +1,48 @@
+# ───────── Secrets / env ─────────
+.env
+.env.*
+*.local
+!.env.example
+
+# ───────── Python (backend) ─────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ───────── Cognee local data (on-disk stores) ─────────
+.cognee/
+cognee_system/
+cognee_data/
+.cognee_system/
+.data_storage/
+databases/
+*.db
+*.sqlite
+*.sqlite3
+*.lance/
+.lancedb/
+*.kuzu/
+
+# ───────── Node / Expo (mobile/ also has its own .gitignore) ─────────
+node_modules/
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/.kotlin/
+mobile/android/
+mobile/ios/
+*.tsbuildinfo
+
+# ───────── Build / misc ─────────
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
