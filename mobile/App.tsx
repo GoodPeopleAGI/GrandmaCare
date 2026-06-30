@@ -114,9 +114,9 @@ function parseTime(timeStr: string): { hour: number; minute: number } {
   return { hour, minute };
 }
 
-// first prescription time as a Date — the picker's DEFAULT value
-function defaultTimeFor(med: Medication): Date {
-  const { hour, minute } = parseTime(med.times[0] ?? '8:00 AM');
+// "8:00 AM" → a Date today at that time (the picker's DEFAULT value)
+function timeStrToDate(timeStr: string): Date {
+  const { hour, minute } = parseTime(timeStr);
   const d = new Date();
   d.setHours(hour, minute, 0, 0);
   return d;
@@ -142,37 +142,136 @@ function toAlarmMed(med: Medication): AlarmMed {
   };
 }
 
+// One scheduled reminder for a medicine. A medicine can have several.
+//   key     = stable id for React + local lookups
+//   time    = when it rings each day
+//   notifId = Notifee's id, needed to cancel/reschedule it
+type AlarmEntry = { key: string; time: Date; notifId: string };
+
+// What the picker is currently being used for.
+//   { mode: 'add' }          → create a new alarm
+//   { mode: 'change', key }   → re-time an existing alarm
+type PickerState = { mode: 'add' | 'change'; key?: string } | null;
+
 // ─────────────────────────────────────────────────────────────
-// 3. ONE CARD — now with an editable alarm
+// 3. ONE CARD — multiple alarms, long-press to edit/delete
 // ─────────────────────────────────────────────────────────────
-function MedicationCard({ med }: { med: Medication }) {
+function MedicationCard({
+  med,
+  onEdit,
+  onDelete,
+}: {
+  med: Medication;
+  onEdit: (updated: Medication) => void;
+  onDelete: (id: string) => void;
+}) {
   const [taken, setTaken] = useState(false);
-  const [alarmTime, setAlarmTime] = useState<Date | null>(null);
-  const [notifId, setNotifId] = useState<string | null>(null);
-  const [showPicker, setShowPicker] = useState(false);
+  const [alarms, setAlarms] = useState<AlarmEntry[]>([]);
+  const [picker, setPicker] = useState<PickerState>(null);
 
-  // Schedule (or reschedule) the daily call-alarm for a chosen time.
-  async function setAlarm(when: Date) {
-    if (notifId) await cancelAlarm(notifId); // remove the old one first
+  // Inline edit mode: when true, the details become editable.
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(med.name);
+  const [draftDose, setDraftDose] = useState(med.dose);
+  const [draftInstr, setDraftInstr] = useState(med.instructions);
+  const [draftEmoji, setDraftEmoji] = useState(med.emoji);
+  const [draftTime, setDraftTime] = useState<Date>(timeStrToDate(med.times[0] ?? '8:00 AM'));
+  const [editTimePicker, setEditTimePicker] = useState(false);
+
+  // ----- ALARMS -----
+
+  // Default time for a NEW alarm: the first prescription time that doesn't
+  // already have an alarm, else the first time, else 8:00 AM.
+  function defaultAddTime(): Date {
+    const used = new Set(alarms.map((a) => formatTime(a.time)));
+    const free = med.times.find((t) => !used.has(t));
+    return timeStrToDate(free ?? med.times[0] ?? '8:00 AM');
+  }
+
+  async function addAlarm(when: Date) {
     const id = await scheduleDailyCall(toAlarmMed(med), when);
-    setNotifId(id);
-    setAlarmTime(when);
+    setAlarms((prev) => [...prev, { key: makeId(), time: when, notifId: id }]);
   }
 
-  async function turnOff() {
-    if (notifId) await cancelAlarm(notifId);
-    setNotifId(null);
-    setAlarmTime(null);
+  async function changeAlarm(key: string, when: Date) {
+    const target = alarms.find((a) => a.key === key);
+    if (target) await cancelAlarm(target.notifId); // drop the old schedule
+    const id = await scheduleDailyCall(toAlarmMed(med), when);
+    setAlarms((prev) =>
+      prev.map((a) => (a.key === key ? { ...a, time: when, notifId: id } : a))
+    );
   }
 
-  // Runs when the time picker closes (Android's picker is one-shot).
+  async function removeAlarm(key: string) {
+    const target = alarms.find((a) => a.key === key);
+    if (target) await cancelAlarm(target.notifId);
+    setAlarms((prev) => prev.filter((a) => a.key !== key));
+  }
+
+  // Android's picker is one-shot: it calls this once when dismissed.
   function onPickTime(event: DateTimePickerEvent, date?: Date) {
-    setShowPicker(false);
-    if (event.type === 'set' && date) setAlarm(date);
+    const current = picker;
+    setPicker(null);
+    if (event.type !== 'set' || !date || !current) return;
+    if (current.mode === 'add') addAlarm(date);
+    else if (current.key) changeAlarm(current.key, date);
   }
 
-  // Tapping "Test" → choose ring now, or a call in 10s (so you can
-  // lock/leave the phone and feel it arrive in the background).
+  // ----- LONG-PRESS: manage this medicine (hidden from accidental taps) -----
+  function handleManage() {
+    Alert.alert(med.name, 'What would you like to do?', [
+      { text: '✏️ Edit details', onPress: startEdit },
+      { text: '🗑️ Delete', style: 'destructive', onPress: confirmDelete },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  function startEdit() {
+    // load current values into the draft fields, then show the inputs
+    setDraftName(med.name);
+    setDraftDose(med.dose);
+    setDraftInstr(med.instructions);
+    setDraftEmoji(med.emoji);
+    setDraftTime(timeStrToDate(med.times[0] ?? '8:00 AM'));
+    setEditing(true);
+  }
+
+  function saveEdit() {
+    // The default time becomes times[0]; any extra prescription times stay.
+    const newTimes = [formatTime(draftTime), ...med.times.slice(1)];
+    onEdit({
+      ...med,
+      name: draftName.trim() || med.name,
+      dose: draftDose.trim(),
+      instructions: draftInstr.trim(),
+      emoji: draftEmoji.trim() || med.emoji,
+      times: newTimes,
+    });
+    setEditing(false);
+  }
+
+  // Edit-mode time picker (separate from the alarm picker above).
+  function onPickEditTime(event: DateTimePickerEvent, date?: Date) {
+    setEditTimePicker(false);
+    if (event.type === 'set' && date) setDraftTime(date);
+  }
+
+  function confirmDelete() {
+    Alert.alert('Delete medicine', `Remove ${med.name} and its reminders?`, [
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          // cancel this card's alarms before the card disappears
+          await Promise.all(alarms.map((a) => cancelAlarm(a.notifId)));
+          onDelete(med.id);
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  // ----- TEST (ring now / in 10s) -----
   function handleTest() {
     Alert.alert('Test reminder', 'When should the call come?', [
       { text: '🔔 Ring now', onPress: testNow },
@@ -202,68 +301,146 @@ function MedicationCard({ med }: { med: Medication }) {
     }
   }
 
+  // The card root is a Pressable so a LONG-press (anywhere that isn't a
+  // button) opens the manage menu. A normal tap does nothing — that keeps
+  // edit/delete out of grandma's way.
   return (
-    <View style={[styles.card, taken && styles.cardTaken]}>
-      <View style={styles.cardTop}>
-        <Text style={styles.emoji}>{med.emoji}</Text>
-        <View style={styles.cardTopText}>
-          <Text style={styles.name}>{med.name}</Text>
-          <Text style={styles.dose}>{med.dose}</Text>
-        </View>
-      </View>
-
-      <View style={styles.timesRow}>
-        {med.times.map((time) => (
-          <View key={time} style={styles.timeBadge}>
-            <Text style={styles.timeText}>🕐 {time}</Text>
+    <Pressable
+      onLongPress={handleManage}
+      delayLongPress={400}
+      style={[styles.card, taken && styles.cardTaken]}
+    >
+      {editing ? (
+        // ---- INLINE EDIT: icon / name / dose / time / instructions ----
+        <View style={styles.editBox}>
+          <View style={styles.editTopRow}>
+            <View style={styles.editEmojiCol}>
+              <Text style={styles.editLabel}>Icon</Text>
+              <TextInput
+                style={styles.editEmojiInput}
+                value={draftEmoji}
+                onChangeText={setDraftEmoji}
+                maxLength={4}
+                placeholder="💊"
+              />
+            </View>
+            <View style={styles.editNameCol}>
+              <Text style={styles.editLabel}>Name</Text>
+              <TextInput
+                style={styles.editInput}
+                value={draftName}
+                onChangeText={setDraftName}
+              />
+            </View>
           </View>
-        ))}
-      </View>
 
-      <Text style={styles.instructions}>{med.instructions}</Text>
+          <Text style={styles.editLabel}>Dose</Text>
+          <TextInput style={styles.editInput} value={draftDose} onChangeText={setDraftDose} />
 
-      {/* ALARM CONTROLS — tap to set a custom time, or accept the default */}
-      {alarmTime ? (
-        <View style={styles.alarmRow}>
-          <Text style={styles.alarmOn}>🔔 Daily at {formatTime(alarmTime)}</Text>
-          <View style={styles.alarmActions}>
-            <Pressable onPress={() => setShowPicker(true)}>
-              <Text style={styles.alarmLink}>Change</Text>
+          <Text style={styles.editLabel}>Default time</Text>
+          <Pressable style={styles.editTimeButton} onPress={() => setEditTimePicker(true)}>
+            <Text style={styles.editTimeText}>🕐 {formatTime(draftTime)}</Text>
+          </Pressable>
+
+          <Text style={styles.editLabel}>Instructions</Text>
+          <TextInput
+            style={[styles.editInput, styles.editInputMultiline]}
+            value={draftInstr}
+            onChangeText={setDraftInstr}
+            multiline
+          />
+
+          {editTimePicker && (
+            <DateTimePicker
+              value={draftTime}
+              mode="time"
+              display="default"
+              onChange={onPickEditTime}
+            />
+          )}
+
+          <View style={styles.editActions}>
+            <Pressable style={styles.editCancel} onPress={() => setEditing(false)}>
+              <Text style={styles.editCancelText}>Cancel</Text>
             </Pressable>
-            <Pressable onPress={turnOff}>
-              <Text style={[styles.alarmLink, styles.alarmOffLink]}>Turn off</Text>
+            <Pressable style={styles.editSave} onPress={saveEdit}>
+              <Text style={styles.editSaveText}>Save</Text>
             </Pressable>
           </View>
         </View>
       ) : (
-        <Pressable style={styles.alarmSetButton} onPress={() => setShowPicker(true)}>
-          <Text style={styles.alarmSetText}>🔔 Set reminder (default {med.times[0]})</Text>
-        </Pressable>
+        // ---- NORMAL VIEW ----
+        <>
+          <View style={styles.cardTop}>
+            <Text style={styles.emoji}>{med.emoji}</Text>
+            <View style={styles.cardTopText}>
+              <Text style={styles.name}>{med.name}</Text>
+              <Text style={styles.dose}>{med.dose}</Text>
+            </View>
+          </View>
+
+          <View style={styles.timesRow}>
+            {med.times.map((time) => (
+              <View key={time} style={styles.timeBadge}>
+                <Text style={styles.timeText}>🕐 {time}</Text>
+              </View>
+            ))}
+          </View>
+
+          {!!med.instructions && (
+            <Text style={styles.instructions}>{med.instructions}</Text>
+          )}
+
+          {/* ALARMS — one row per reminder, plus an Add button */}
+          {alarms.map((a) => (
+            <View key={a.key} style={styles.alarmRow}>
+              <Text style={styles.alarmOn}>🔔 Daily at {formatTime(a.time)}</Text>
+              <View style={styles.alarmActions}>
+                <Pressable onPress={() => setPicker({ mode: 'change', key: a.key })}>
+                  <Text style={styles.alarmLink}>Change</Text>
+                </Pressable>
+                <Pressable onPress={() => removeAlarm(a.key)}>
+                  <Text style={[styles.alarmLink, styles.alarmOffLink]}>Remove</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))}
+
+          <Pressable style={styles.alarmSetButton} onPress={() => setPicker({ mode: 'add' })}>
+            <Text style={styles.alarmSetText}>
+              {alarms.length === 0
+                ? `🔔 Set reminder (default ${med.times[0] ?? '8:00 AM'})`
+                : '➕ Add another reminder'}
+            </Text>
+          </Pressable>
+
+          {/* choose: ring now, or schedule a call in 10s */}
+          <Pressable onPress={handleTest}>
+            <Text style={styles.testLink}>▶ Test this alarm</Text>
+          </Pressable>
+
+          {picker && (
+            <DateTimePicker
+              value={
+                picker.mode === 'change'
+                  ? alarms.find((a) => a.key === picker.key)?.time ?? defaultAddTime()
+                  : defaultAddTime()
+              }
+              mode="time"
+              display="default"
+              onChange={onPickTime}
+            />
+          )}
+
+          <Pressable
+            style={[styles.button, taken && styles.buttonTaken]}
+            onPress={() => setTaken(!taken)}
+          >
+            <Text style={styles.buttonText}>{taken ? '✓ Taken' : 'Mark as taken'}</Text>
+          </Pressable>
+        </>
       )}
-
-      {/* choose: ring now, or schedule a call in 10s */}
-      <Pressable onPress={handleTest}>
-        <Text style={styles.testLink}>▶ Test this alarm</Text>
-      </Pressable>
-
-      {showPicker && (
-        <DateTimePicker
-          value={alarmTime ?? defaultTimeFor(med)}
-          mode="time"
-          display="default"
-          onChange={onPickTime}
-        />
-      )}
-
-      <Pressable
-        style={[styles.button, taken && styles.buttonTaken]}
-        onPress={() => setTaken(!taken)}
-      >
-        <Text style={styles.buttonText}>
-          {taken ? '✓ Taken' : 'Mark as taken'}
-        </Text>
-      </Pressable>
-    </View>
+    </Pressable>
   );
 }
 
@@ -271,15 +448,32 @@ function MedicationCard({ med }: { med: Medication }) {
 // 4. THE MEDS SCREEN (your Phase 1 cards, just moved into their
 // own component so it can live behind the 💊 Meds tab)
 // ─────────────────────────────────────────────────────────────
-function MedicinesScreen() {
+function MedicinesScreen({
+  meds,
+  onEdit,
+  onDelete,
+}: {
+  meds: Medication[];
+  onEdit: (updated: Medication) => void;
+  onDelete: (id: string) => void;
+}) {
   return (
     <View style={styles.screen}>
       <Text style={styles.header}>Today's Medicines</Text>
       <ScrollView contentContainerStyle={styles.list}>
-        {SAMPLE_MEDS.map((med) => (
-          <MedicationCard key={med.id} med={med} />
-        ))}
+        {meds.length === 0 ? (
+          <Text style={styles.emptyMeds}>
+            No medicines yet. Go to 💬 Chat and scan a prescription to add some.
+          </Text>
+        ) : (
+          meds.map((med) => (
+            <MedicationCard key={med.id} med={med} onEdit={onEdit} onDelete={onDelete} />
+          ))
+        )}
       </ScrollView>
+      {meds.length > 0 && (
+        <Text style={styles.manageHint}>Press and hold a medicine to edit or delete it.</Text>
+      )}
     </View>
   );
 }
@@ -359,11 +553,62 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 // ─────────────────────────────────────────────────────────────
 // 5c. TALK TO THE BACKEND
-// Sends one message to your AgentOS run endpoint and returns the
-// agent's reply text. Uses multipart/form-data (what the endpoint
-// expects) and stream=false (one request → one JSON reply).
+// Sends one message to your AgentOS run endpoint and returns BOTH
+// the agent's reply text AND any medication cards the agent built.
+// Uses multipart/form-data (what the endpoint expects) and
+// stream=false (one request → one JSON reply).
 // ─────────────────────────────────────────────────────────────
-async function sendToAgent(message: string, imageUri?: string): Promise<string> {
+
+// What one round-trip to the agent gives us back.
+type AgentReply = {
+  reply: string;              // the chat text to show in a bubble
+  cards: Medication[] | null; // cards the agent created this turn, if any
+};
+
+// Dig the medication cards out of the run response. The backend tool
+// `create_medication_cards` returns { type, cards } and Agno attaches
+// that under `data.tools[]`. Serialization details vary, so we probe a
+// few likely field names instead of trusting exactly one shape.
+function extractCards(data: any): Medication[] | null {
+  const tools = Array.isArray(data?.tools) ? data.tools : [];
+  for (const t of tools) {
+    const name = t?.tool_name ?? t?.name;
+    if (name !== 'create_medication_cards') continue;
+
+    // The tool's RETURN value (has the backend-generated ids).
+    let payload: any = t?.result ?? t?.content;
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        payload = null;
+      }
+    }
+    let cards = payload?.cards;
+
+    // Fallback: if the result wasn't usable, use the ARGUMENTS the model
+    // passed in. Those lack ids, so we mint one per card on the client.
+    if (!Array.isArray(cards)) {
+      let args: any = t?.tool_args ?? t?.args;
+      if (typeof args === 'string') {
+        try {
+          args = JSON.parse(args);
+        } catch {
+          args = null;
+        }
+      }
+      cards = args?.cards;
+    }
+
+    if (Array.isArray(cards) && cards.length > 0) {
+      // Make sure every card has an id (React list keys + alarm id).
+      return cards.map((c: any) => ({ id: c.id ?? makeId(), ...c })) as Medication[];
+    }
+  }
+  return null;
+}
+
+async function sendToAgent(message: string, imageUri?: string): Promise<AgentReply> {
   const form = new FormData();
   form.append('message', message);
   form.append('stream', 'false');
@@ -388,15 +633,17 @@ async function sendToAgent(message: string, imageUri?: string): Promise<string> 
   }
 
   const data = await res.json();
-  // Agno puts the agent's reply text in `content`.
-  return typeof data?.content === 'string' ? data.content : JSON.stringify(data);
+  // Agno puts the agent's reply text in `content`; cards ride along in `tools`.
+  const reply =
+    typeof data?.content === 'string' ? data.content : JSON.stringify(data);
+  return { reply, cards: extractCards(data) };
 }
 
 // ─────────────────────────────────────────────────────────────
 // 5d. THE CHAT SCREEN — bubbles + a real input bar wired to the
 // agent. Type → your bubble appears instantly → agent replies.
 // ─────────────────────────────────────────────────────────────
-function ChatScreen() {
+function ChatScreen({ onCards }: { onCards: (cards: Medication[]) => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -412,8 +659,11 @@ function ChatScreen() {
     ]);
     setSending(true);
     try {
-      const reply = await sendToAgent(userText, imageUri);
+      const { reply, cards } = await sendToAgent(userText, imageUri);
       setMessages((prev) => [...prev, { id: makeId(), from: 'agent', text: reply }]);
+      // If the agent built medicine cards this turn, hand them up to App
+      // so the 💊 Meds tab can show them.
+      if (cards) onCards(cards);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -557,7 +807,11 @@ function AlarmScreen({ med, onDone }: { med: AlarmMed; onDone: () => void }) {
   useEffect(() => {
     const line = `Hello. It is time to take your ${med.name}. Please take ${med.dose} now. ${med.instructions}.`;
     Speech.speak(line, { rate: 0.9 });
-    return () => Speech.stop();
+    // Wrap in a block so the cleanup returns void (Speech.stop() is async;
+    // a useEffect cleanup must not return a Promise).
+    return () => {
+      Speech.stop();
+    };
   }, [med]);
 
   return (
@@ -590,6 +844,32 @@ export default function App() {
   const [tab, setTab] = useState<'chat' | 'meds'>('meds');
   // When the reminder is answered/opened, this holds the med to announce.
   const [activeAlarm, setActiveAlarm] = useState<AlarmMed | null>(null);
+  // The medicine cards shown on the Meds tab. Starts EMPTY — real cards
+  // come from the agent. (For a demo with seed data, use `SAMPLE_MEDS`.)
+  const [meds, setMeds] = useState<Medication[]>([]);
+
+  // Called when the agent returns cards. Merge by name (case-insensitive):
+  // a card with a name we already have replaces it; new names get appended.
+  // Then jump to the Meds tab so the user sees what just got added.
+  function addCards(incoming: Medication[]) {
+    setMeds((prev) => {
+      const byName = new Map(prev.map((m) => [m.name.toLowerCase(), m]));
+      for (const card of incoming) byName.set(card.name.toLowerCase(), card);
+      return Array.from(byName.values());
+    });
+    setTab('meds');
+  }
+
+  // Long-press → Edit: replace the medicine that has this id.
+  function editMed(updated: Medication) {
+    setMeds((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+  }
+
+  // Long-press → Delete: drop the medicine. (The card cancels its own
+  // alarms first, before it calls this.)
+  function deleteMed(id: string) {
+    setMeds((prev) => prev.filter((m) => m.id !== id));
+  }
 
   useEffect(() => {
     setupAlarms();
@@ -637,8 +917,17 @@ export default function App() {
       style={styles.root}
       behavior="height" // Android: shrink the layout so the input rises above the keyboard
     >
-      {/* the active screen fills all space above the tab bar */}
-      {tab === 'chat' ? <ChatScreen /> : <MedicinesScreen />}
+      {/* Both screens stay MOUNTED; we just hide the inactive one with
+          display:'none'. That preserves each screen's state across tab
+          switches (so the chat history no longer vanishes), and makes the
+          auto-jump-to-Meds after a scan safe — you can switch back to Chat
+          and your conversation is still there. */}
+      <View style={[styles.screenSlot, tab !== 'chat' && styles.hidden]}>
+        <ChatScreen onCards={addCards} />
+      </View>
+      <View style={[styles.screenSlot, tab !== 'meds' && styles.hidden]}>
+        <MedicinesScreen meds={meds} onEdit={editMed} onDelete={deleteMed} />
+      </View>
 
       {/* the bottom tab bar */}
       <View style={styles.tabBar}>
@@ -669,6 +958,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#EEF2F6',
   },
+  screenSlot: {
+    flex: 1,
+  },
+  hidden: {
+    display: 'none',
+  },
   screen: {
     flex: 1,
     backgroundColor: '#EEF2F6',
@@ -684,6 +979,14 @@ const styles = StyleSheet.create({
   list: {
     padding: 16,
     gap: 16,
+  },
+  emptyMeds: {
+    fontSize: 18,
+    color: '#64748B',
+    textAlign: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 40,
+    lineHeight: 26,
   },
   // chat
   chatList: {
@@ -880,6 +1183,100 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 22,
     fontWeight: '800',
+  },
+  // inline edit (long-press → Edit details)
+  editBox: {
+    gap: 8,
+  },
+  editTopRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-end',
+  },
+  editEmojiCol: {
+    gap: 8,
+  },
+  editNameCol: {
+    flex: 1,
+    gap: 8,
+  },
+  editEmojiInput: {
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    width: 64,
+    paddingVertical: 8,
+    fontSize: 28,
+    textAlign: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  editTimeButton: {
+    borderWidth: 2,
+    borderColor: '#2563EB',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+  },
+  editTimeText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  editLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  editInput: {
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 18,
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+  },
+  editInputMultiline: {
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
+  editActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  editCancel: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#E2E8F0',
+  },
+  editCancelText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  editSave: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#2563EB',
+  },
+  editSaveText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  manageHint: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+    paddingBottom: 8,
   },
   // alarm "call" screen
   alarmScreen: {
