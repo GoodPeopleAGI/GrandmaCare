@@ -17,6 +17,7 @@ Run:  python app.py   (or: uv run app.py)
 import os
 
 from agno.os import AgentOS
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from agents import agent
@@ -30,7 +31,18 @@ app = agentos.get_app()
 # none), and the same ngrok tunnel exposes it at https://<id>.../web for
 # anyone to try without building the mobile app.
 _WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-app.mount("/web", StaticFiles(directory=_WEB_DIR, html=True), name="web")
+
+
+# Explicit index redirect instead of StaticFiles(html=True): with this
+# starlette version, html=True answers /web/ with a redirect to itself
+# (infinite 307 loop). Routes are matched before the mount below.
+@app.get("/web", include_in_schema=False)
+@app.get("/web/", include_in_schema=False)
+async def _web_index():
+    return RedirectResponse("/web/index.html")
+
+
+app.mount("/web", StaticFiles(directory=_WEB_DIR), name="web")
 
 
 # ─────────────────────────────────────────────────────────────

@@ -6,7 +6,9 @@
 html, body {
   height: 100%;
   background: #EEF2F6;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Roboto first: RN's default on Android, so the clone matches the phone.
+     Loaded from Google Fonts (see index.html); falls back to system fonts. */
+  font-family: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: #0F172A;
 }
 

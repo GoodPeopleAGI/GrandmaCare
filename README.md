@@ -39,6 +39,12 @@ memory** — and reminds in a friendly voice that's hard to miss.
 - 💊 **Medication cards** — prescriptions and regular medicines become large,
   readable tiles (name, dose, times, instructions) with a per-card **Scan
   medicine** button.
+- 🛡️ **Pill-safety check** — whenever a new medicine appears (scan or chat), the
+  agent recalls the patient's stored allergies and current medicines and warns
+  gently about possible conflicts — graph reasoning over the record.
+- 📝 **Self-written visit notes** — when a chat wraps up, the agent files a short
+  third-person summary of the visit (what was asked, what was advised) into the
+  graph via Cognee's `save_interaction` — no one has to ask.
 - 📞 **Call-style alarms** — full-screen, ringing reminders you "answer" to hear
   the medicine spoken aloud (Notifee + on-device TTS). Verified on-device.
 - 🩺 **Doctor view** — the accumulated record is browsable as a live **knowledge
@@ -49,8 +55,6 @@ memory** — and reminds in a friendly voice that's hard to miss.
 - 🌏 Multilingual replies + voice (Sarvam STT/TTS)
 - 🩺 A specialist medical advisor (MedGemma) for symptom reasoning
 - 🔔 Caregiver alerts when reminders go unattended
-- 🛡️ Pill-safety check — recall allergies/current meds on a scan and warn on
-  interactions (graph reasoning over the stored record)
 
 ## How Cognee is used
 
@@ -87,16 +91,18 @@ lifecycle:
 | Cognee API | Where | What it does here |
 |---|---|---|
 | `remember` | agent, every health message | Saves dated, third-person facts ("On 2026-07-02: the patient felt dizzy.") |
-| `recall` | agent, before answering | Answers history/medicine/safety questions from stored memory only — never invents facts |
+| `recall` | agent, before answering | Answers history/medicine/safety questions from stored memory only — never invents facts; powers the pill-safety check |
+| `save_interaction` | agent, end of each chat | Files a visit-note summary into the graph (its own node set) for the doctor |
 | `search` | agent / UI | Graph + vector search over the record |
+| `list_data` / `cognify_status` | agent, on request | "What's on my record?" / "Is it up to date?" |
 | graph + vector store | Cognee backend | SQLite (metadata) + LanceDB (vectors) + Kuzu (graph), all on disk |
 | web UI | caretaker's laptop | Browse the knowledge graph, search the history |
 
 The agent never imports Cognee directly. It reaches it over **MCP** (Model Context
-Protocol) through the stock Agno `MCPTools`, so the model gets a clean, whitelisted
-toolset (`remember` / `recall` / `search` — the destructive `forget`/`delete`/`prune`
-tools are deliberately withheld). See [Architecture](#architecture) for why that
-indirection exists.
+Protocol) through the stock Agno `MCPTools`, with a whitelist of every
+non-destructive tool — `forget`/`delete`/`prune` are deliberately withheld so a
+hallucinated call can never wipe the health record. See
+[Architecture](#architecture) for why that indirection exists.
 
 ## Architecture
 
