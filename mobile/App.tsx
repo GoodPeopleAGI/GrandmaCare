@@ -1,5 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+
+import { STORE, loadJSON, saveJSON, newId } from './storage';
 import {
   ActivityIndicator,
   Alert,
@@ -36,18 +38,82 @@ import {
 // BACKEND CONFIG
 //   • AGENT_OS_URL comes from mobile/.env (EXPO_PUBLIC_AGENT_OS_URL).
 //     On a PHYSICAL phone this MUST be your PC's LAN IP (find via
-//     `ipconfig`), e.g. http://192.168.1.50:8000 — NOT localhost.
+//     `ipconfig`), e.g. http://192.168.1.50:7777 — NOT localhost.
+//     (The agent server moved to port 7777; ngrok must tunnel 7777 too.
+//     Port 8000 now belongs to the cognee memory backend.)
 //   • AGENT_ID must match Agent(id=...) in agents.py (we used "agent").
 // The `?? '...'` is a fallback used only if the .env value is missing.
 // ═══════════════════════════════════════════════════════════════
 const AGENT_OS_URL = (
-  process.env.EXPO_PUBLIC_AGENT_OS_URL ?? 'http://192.168.1.50:8000'
+  process.env.EXPO_PUBLIC_AGENT_OS_URL ?? 'http://192.168.1.50:7777'
 ).replace(/\/+$/, ''); // strip any trailing slash so we don't get "//agents"
 const AGENT_ID = 'agent';
 
 // Tiny helper so every chat message gets a unique id.
 function makeId(): string {
   return Math.random().toString(36).slice(2);
+}
+
+type ImageSource = 'camera' | 'gallery';
+
+async function pickImageFromSource(
+  source: ImageSource,
+  quality: number,
+  cameraPermissionMessage: string
+): Promise<string | null> {
+  let result: ImagePicker.ImagePickerResult;
+
+  if (source === 'camera') {
+    // Camera needs runtime permission; the gallery picker does not.
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', cameraPermissionMessage);
+      return null;
+    }
+    result = await ImagePicker.launchCameraAsync({ quality });
+  } else {
+    result = await ImagePicker.launchImageLibraryAsync({ quality });
+  }
+
+  if (result.canceled) return null;
+  return result.assets[0]?.uri ?? null;
+}
+
+// Shared picker UI used by chat and card-level medicine scan.
+function pickImageFromCameraOrGallery({
+  title,
+  message,
+  quality,
+  cameraPermissionMessage,
+}: {
+  title: string;
+  message: string;
+  quality: number;
+  cameraPermissionMessage: string;
+}): Promise<string | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const settle = (uri: string | null) => {
+      if (done) return;
+      done = true;
+      resolve(uri);
+    };
+
+    const from = async (source: ImageSource) => {
+      try {
+        const uri = await pickImageFromSource(source, quality, cameraPermissionMessage);
+        settle(uri);
+      } catch {
+        settle(null);
+      }
+    };
+
+    Alert.alert(title, message, [
+      { text: '📷 Take Photo', onPress: () => from('camera') },
+      { text: '🖼️ Choose from Gallery', onPress: () => from('gallery') },
+      { text: 'Cancel', style: 'cancel', onPress: () => settle(null) },
+    ]);
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -142,6 +208,31 @@ function toAlarmMed(med: Medication): AlarmMed {
   };
 }
 
+// Ask the backend agent to verify a medicine photo against a card.
+async function analyzeMedicationPhoto(
+  expected: Medication,
+  imageUri: string
+): Promise<string> {
+  const prompt = [
+    'You are helping verify a medicine from a caregiver app.',
+    `Expected medicine name: ${expected.name}`,
+    `Expected dose: ${expected.dose || 'Unknown'}`,
+    `Expected schedule: ${expected.times.join(', ') || 'Not set'}`,
+    `Expected instructions: ${expected.instructions || 'None'}`,
+    'Analyze the attached photo and answer in concise markdown with:',
+    '1) Match: Yes / No / Unsure',
+    '2) What medicine this most likely is',
+    '3) When it should be taken',
+    '4) Any safety warning if uncertain',
+  ].join('\n');
+
+  // No session ids here: a one-off photo check doesn't need to join the
+  // chat's conversation history. (Cognee will own the "is this hers?"
+  // check later; for now this just asks the model about the photo.)
+  const { reply } = await sendToAgent(prompt, undefined, imageUri);
+  return reply;
+}
+
 // One scheduled reminder for a medicine. A medicine can have several.
 //   key     = stable id for React + local lookups
 //   time    = when it rings each day
@@ -171,6 +262,8 @@ function MedicationCard({
 
   // Inline edit mode: when true, the details become editable.
   const [editing, setEditing] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
   const [draftName, setDraftName] = useState(med.name);
   const [draftDose, setDraftDose] = useState(med.dose);
   const [draftInstr, setDraftInstr] = useState(med.instructions);
@@ -301,6 +394,30 @@ function MedicationCard({
     }
   }
 
+  // Capture a medicine photo and ask the backend agent to verify it.
+  async function handleScanMedicine() {
+    if (scanning) return;
+
+    try {
+      const uri = await pickImageFromCameraOrGallery({
+        title: 'Scan medicine',
+        message: 'Where should the photo come from?',
+        quality: 0.7,
+        cameraPermissionMessage: 'Camera access is required to scan medicine.',
+      });
+      if (!uri) return;
+
+      setScanning(true);
+      const reply = await analyzeMedicationPhoto(med, uri);
+      setScanResult(reply);
+      Alert.alert('Scan complete', 'AI analysis was added under this medicine card.');
+    } catch (e) {
+      Alert.alert('Scan failed', String(e));
+    } finally {
+      setScanning(false);
+    }
+  }
+
   // The card root is a Pressable so a LONG-press (anywhere that isn't a
   // button) opens the manage menu. A normal tap does nothing — that keeps
   // edit/delete out of grandma's way.
@@ -419,6 +536,24 @@ function MedicationCard({
             <Text style={styles.testLink}>▶ Test this alarm</Text>
           </Pressable>
 
+          <Pressable
+            style={[styles.scanButton, scanning && styles.scanButtonDisabled]}
+            onPress={handleScanMedicine}
+            disabled={scanning}
+          >
+            {scanning ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.scanButtonText}>📷 Scan this medicine</Text>
+            )}
+          </Pressable>
+
+          {!!scanResult && (
+            <View style={styles.scanResultBox}>
+              <Markdown style={scanMarkdownStyles}>{scanResult}</Markdown>
+            </View>
+          )}
+
           {picker && (
             <DateTimePicker
               value={
@@ -531,6 +666,15 @@ const markdownStyles: any = {
   link: { color: '#2563EB' },
 };
 
+const scanMarkdownStyles: any = {
+  body: { fontSize: 16, lineHeight: 22, color: '#0F172A' },
+  strong: { fontWeight: '700' },
+  bullet_list: { marginVertical: 2 },
+  ordered_list: { marginVertical: 2 },
+  list_item: { marginVertical: 1 },
+  paragraph: { marginVertical: 2 },
+};
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.from === 'user';
 
@@ -608,10 +752,19 @@ function extractCards(data: any): Medication[] | null {
   return null;
 }
 
-async function sendToAgent(message: string, imageUri?: string): Promise<AgentReply> {
+async function sendToAgent(
+  message: string,
+  ids?: { userId: string; sessionId: string },
+  imageUri?: string
+): Promise<AgentReply> {
   const form = new FormData();
   form.append('message', message);
   form.append('stream', 'false');
+  // Tie this run to a stable user + conversation so the backend (now on
+  // SQLite) can remember the history across restarts. Optional: a one-off
+  // call (e.g. a photo check) can skip these and get a fresh thread.
+  if (ids?.userId) form.append('user_id', ids.userId);
+  if (ids?.sessionId) form.append('session_id', ids.sessionId);
   if (imageUri) {
     // attach the photo as a file part (what the endpoint's `files` field expects)
     form.append('files', {
@@ -643,9 +796,25 @@ async function sendToAgent(message: string, imageUri?: string): Promise<AgentRep
 // 5d. THE CHAT SCREEN — bubbles + a real input bar wired to the
 // agent. Type → your bubble appears instantly → agent replies.
 // ─────────────────────────────────────────────────────────────
-function ChatScreen({ onCards }: { onCards: (cards: Medication[]) => void }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
+function ChatScreen({
+  messages,
+  setMessages,
+  onCards,
+  userId,
+  sessionId,
+  onNewSession,
+}: {
+  // Chat state is OWNED by App now (so it can be persisted). ChatScreen just
+  // reads it and appends to it — hence messages + setMessages come as props.
+  messages: ChatMessage[];
+  setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  onCards: (cards: Medication[]) => void;
+  userId: string;
+  sessionId: string;
+  onNewSession: () => void;
+}) {
   const [input, setInput] = useState('');
+  const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -653,13 +822,20 @@ function ChatScreen({ onCards }: { onCards: (cards: Medication[]) => void }) {
   // agent, then append the reply.
   async function ask(userText: string, imageUri?: string) {
     if (sending) return;
+    const shownText = userText.trim();
+    const backendText = shownText || (imageUri ? 'Please read this attached image.' : userText);
+
     setMessages((prev) => [
       ...prev,
-      { id: makeId(), from: 'user', text: userText, imageUri },
+      { id: makeId(), from: 'user', text: shownText, imageUri },
     ]);
     setSending(true);
     try {
-      const { reply, cards } = await sendToAgent(userText, imageUri);
+      const { reply, cards } = await sendToAgent(
+        backendText,
+        { userId, sessionId },
+        imageUri
+      );
       setMessages((prev) => [...prev, { id: makeId(), from: 'agent', text: reply }]);
       // If the agent built medicine cards this turn, hand them up to App
       // so the 💊 Meds tab can show them.
@@ -680,44 +856,54 @@ function ChatScreen({ onCards }: { onCards: (cards: Medication[]) => void }) {
 
   function handleSend() {
     const text = input.trim();
-    if (!text) return;
+    const imageUri = pendingImageUri ?? undefined;
+    if (!text && !imageUri) return;
     setInput('');
-    ask(text);
+    setPendingImageUri(null);
+    ask(text, imageUri);
   }
 
   // Tapping 📷 → native Android dialog: take a photo OR pick from gallery.
-  function handlePickImage() {
+  async function handlePickImage() {
     if (sending) return;
-    Alert.alert('Add a prescription', 'Where should the photo come from?', [
-      { text: '📷 Take Photo', onPress: () => pickFrom('camera') },
-      { text: '🖼️ Choose from Gallery', onPress: () => pickFrom('gallery') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+
+    const uri = await pickImageFromCameraOrGallery({
+      title: 'Add a prescription',
+      message: 'Where should the photo come from?',
+      quality: 0.6,
+      cameraPermissionMessage: 'Camera access is required to take a photo.',
+    });
+    if (!uri) return;
+
+    setPendingImageUri(uri);
   }
 
-  async function pickFrom(source: 'camera' | 'gallery') {
-    let result: ImagePicker.ImagePickerResult;
-
-    if (source === 'camera') {
-      // Camera needs runtime permission; the gallery picker does not.
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Permission needed', 'Camera access is required to take a photo.');
-        return;
-      }
-      result = await ImagePicker.launchCameraAsync({ quality: 0.6 });
-    } else {
-      result = await ImagePicker.launchImageLibraryAsync({ quality: 0.6 });
-    }
-
-    if (result.canceled) return; // user backed out
-    const uri = result.assets[0].uri;
-    ask('Here is my prescription. Please read it and list the medicines simply.', uri);
+  // 🔄 header button: start a brand-new conversation (fresh session id).
+  // Confirm first — one stray tap shouldn't wipe grandma's chat.
+  function handleNewSession() {
+    if (sending) return;
+    Alert.alert(
+      'Start a new conversation?',
+      'This clears the chat on this phone and begins a fresh session. Your medicines are kept.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Start fresh', style: 'destructive', onPress: onNewSession },
+      ]
+    );
   }
 
   return (
     <View style={styles.screen}>
-      <Text style={styles.header}>Chat</Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.header}>Chat</Text>
+        <Pressable
+          style={styles.newChatButton}
+          onPress={handleNewSession}
+          disabled={sending}
+        >
+          <Text style={styles.newChatText}>🔄 New chat</Text>
+        </Pressable>
+      </View>
 
       <ScrollView
         ref={scrollRef}
@@ -738,6 +924,24 @@ function ChatScreen({ onCards }: { onCards: (cards: Medication[]) => void }) {
       </ScrollView>
 
       <View style={styles.inputBar}>
+        {pendingImageUri && (
+          <View style={styles.pendingImageRow}>
+            <Image source={{ uri: pendingImageUri }} style={styles.pendingImagePreview} />
+            <View style={styles.pendingImageMeta}>
+              <Text style={styles.pendingImageTitle}>Photo attached</Text>
+              <Text style={styles.pendingImageSubtitle}>Add a caption, then send</Text>
+            </View>
+            <Pressable
+              style={styles.pendingImageRemoveBtn}
+              onPress={() => setPendingImageUri(null)}
+              disabled={sending}
+            >
+              <Text style={styles.pendingImageRemoveText}>✕</Text>
+            </Pressable>
+          </View>
+        )}
+
+        <View style={styles.inputControlsRow}>
         <Pressable
           style={styles.iconButton}
           onPress={handlePickImage}
@@ -767,6 +971,7 @@ function ChatScreen({ onCards }: { onCards: (cards: Medication[]) => void }) {
             <Text style={styles.sendText}>➤</Text>
           )}
         </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -782,14 +987,21 @@ function TabButton({
   label,
   active,
   onPress,
+  onLongPress,
 }: {
   icon: string;
   label: string;
   active: boolean;
   onPress: () => void;
+  onLongPress?: () => void; // optional hidden action (e.g. open settings)
 }) {
   return (
-    <Pressable style={styles.tabButton} onPress={onPress}>
+    <Pressable
+      style={styles.tabButton}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={600}
+    >
       <Text style={styles.tabIcon}>{icon}</Text>
       <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
         {label}
@@ -838,6 +1050,94 @@ function AlarmScreen({ med, onDone }: { med: AlarmMed; onDone: () => void }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 6c. THE HIDDEN SETTINGS SCREEN — for the CAREGIVER, not grandma.
+// Reached only by LONG-PRESSING the 💬 Chat tab, so a stray tap can't
+// open it. Shows the ids that link this phone to its saved history, and
+// lets the caregiver start a clean conversation.
+// ─────────────────────────────────────────────────────────────
+function SettingsScreen({
+  userId,
+  sessionId,
+  onSave,
+  onNewSession,
+  onClose,
+}: {
+  userId: string;
+  sessionId: string;
+  onSave: (userId: string, sessionId: string) => void;
+  onNewSession: () => void;
+  onClose: () => void;
+}) {
+  const [draftUser, setDraftUser] = useState(userId);
+  const [draftSession, setDraftSession] = useState(sessionId);
+
+  return (
+    <View style={styles.settingsScreen}>
+      <Text style={styles.settingsTitle}>⚙️ Caregiver settings</Text>
+      <Text style={styles.settingsHint}>
+        These IDs link this phone to its saved chat and medicines. Most people
+        never need to change them.
+      </Text>
+
+      <Text style={styles.editLabel}>User ID</Text>
+      <TextInput
+        style={styles.editInput}
+        value={draftUser}
+        onChangeText={setDraftUser}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+
+      <Text style={styles.editLabel}>Session ID</Text>
+      <TextInput
+        style={styles.editInput}
+        value={draftSession}
+        onChangeText={setDraftSession}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+
+      <Pressable
+        style={styles.settingsSaveBtn}
+        onPress={() => {
+          onSave(draftUser, draftSession);
+          onClose();
+        }}
+      >
+        <Text style={styles.settingsSaveText}>Save</Text>
+      </Pressable>
+
+      <Pressable
+        style={styles.settingsNewBtn}
+        onPress={() =>
+          Alert.alert(
+            'Start a new conversation?',
+            'This clears the chat on this phone and begins a fresh session. Your medicines are kept.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Start fresh',
+                style: 'destructive',
+                onPress: () => {
+                  onNewSession();
+                  onClose();
+                },
+              },
+            ]
+          )
+        }
+      >
+        <Text style={styles.settingsNewText}>🔄 Start new conversation</Text>
+      </Pressable>
+
+      <Pressable style={styles.settingsCloseBtn} onPress={onClose}>
+        <Text style={styles.settingsCloseText}>Close</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // 7. THE APP — tabs + the alarm "call" overlay.
 // ─────────────────────────────────────────────────────────────
 export default function App() {
@@ -847,6 +1147,67 @@ export default function App() {
   // The medicine cards shown on the Meds tab. Starts EMPTY — real cards
   // come from the agent. (For a demo with seed data, use `SAMPLE_MEDS`.)
   const [meds, setMeds] = useState<Medication[]>([]);
+
+  // Chat + identity live here now (lifted up) so they can be PERSISTED and
+  // shared with the backend. userId/sessionId are created ONCE on first
+  // launch and reused forever — that's what lets the agent recognise this
+  // person across restarts.
+  const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
+  const [userId, setUserId] = useState('');
+  const [sessionId, setSessionId] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+
+  // `ready` gates the whole UI until we've loaded from storage, so we never
+  // render (or overwrite storage) with the momentary empty defaults.
+  const [ready, setReady] = useState(false);
+
+  // Load persisted state ONCE at startup. Missing ids are minted and saved.
+  useEffect(() => {
+    (async () => {
+      let uid = await loadJSON<string>(STORE.userId, '');
+      let sid = await loadJSON<string>(STORE.sessionId, '');
+      if (!uid) {
+        uid = newId('user');
+        await saveJSON(STORE.userId, uid);
+      }
+      if (!sid) {
+        sid = newId('session');
+        await saveJSON(STORE.sessionId, sid);
+      }
+      setUserId(uid);
+      setSessionId(sid);
+      setMeds(await loadJSON<Medication[]>(STORE.meds, []));
+      setMessages(await loadJSON<ChatMessage[]>(STORE.chat, SEED_MESSAGES));
+      setReady(true);
+    })();
+  }, []);
+
+  // Save meds + chat whenever they change — but only AFTER the initial load,
+  // so the empty defaults don't clobber what we just restored.
+  useEffect(() => {
+    if (ready) saveJSON(STORE.meds, meds);
+  }, [meds, ready]);
+  useEffect(() => {
+    if (ready) saveJSON(STORE.chat, messages);
+  }, [messages, ready]);
+
+  // Caregiver settings: apply + persist edited ids (blank falls back to old).
+  function saveIds(nextUser: string, nextSession: string) {
+    const u = nextUser.trim() || userId;
+    const s = nextSession.trim() || sessionId;
+    setUserId(u);
+    setSessionId(s);
+    saveJSON(STORE.userId, u);
+    saveJSON(STORE.sessionId, s);
+  }
+
+  // Start a brand-new conversation: fresh session id + clear the chat.
+  function startFreshSession() {
+    const s = newId('session');
+    setSessionId(s);
+    saveJSON(STORE.sessionId, s);
+    setMessages(SEED_MESSAGES);
+  }
 
   // Called when the agent returns cards. Merge by name (case-insensitive):
   // a card with a name we already have replaces it; new names get appended.
@@ -907,6 +1268,28 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  // Hold the UI back until storage has loaded (a brief flash of a spinner).
+  if (!ready) {
+    return (
+      <View style={styles.splash}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </View>
+    );
+  }
+
+  // The hidden caregiver settings take over the screen when opened.
+  if (showSettings) {
+    return (
+      <SettingsScreen
+        userId={userId}
+        sessionId={sessionId}
+        onSave={saveIds}
+        onNewSession={startFreshSession}
+        onClose={() => setShowSettings(false)}
+      />
+    );
+  }
+
   // The "call" screen takes over the whole app when active.
   if (activeAlarm) {
     return <AlarmScreen med={activeAlarm} onDone={() => setActiveAlarm(null)} />;
@@ -923,7 +1306,14 @@ export default function App() {
           auto-jump-to-Meds after a scan safe — you can switch back to Chat
           and your conversation is still there. */}
       <View style={[styles.screenSlot, tab !== 'chat' && styles.hidden]}>
-        <ChatScreen onCards={addCards} />
+        <ChatScreen
+          messages={messages}
+          setMessages={setMessages}
+          onCards={addCards}
+          userId={userId}
+          sessionId={sessionId}
+          onNewSession={startFreshSession}
+        />
       </View>
       <View style={[styles.screenSlot, tab !== 'meds' && styles.hidden]}>
         <MedicinesScreen meds={meds} onEdit={editMed} onDelete={deleteMed} />
@@ -942,6 +1332,8 @@ export default function App() {
           label="Chat"
           active={tab === 'chat'}
           onPress={() => setTab('chat')}
+          // Hidden caregiver gesture: press & hold Chat to open settings.
+          onLongPress={() => setShowSettings(true)}
         />
       </View>
 
@@ -964,6 +1356,64 @@ const styles = StyleSheet.create({
   hidden: {
     display: 'none',
   },
+  splash: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2F6',
+  },
+  settingsScreen: {
+    flex: 1,
+    padding: 24,
+    paddingTop: 64,
+    backgroundColor: '#EEF2F6',
+  },
+  settingsTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+  },
+  settingsHint: {
+    fontSize: 15,
+    color: '#64748B',
+    marginBottom: 24,
+    lineHeight: 21,
+  },
+  settingsSaveBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  settingsSaveText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  settingsNewBtn: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  settingsNewText: {
+    color: '#92400E',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  settingsCloseBtn: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  settingsCloseText: {
+    color: '#64748B',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   screen: {
     flex: 1,
     backgroundColor: '#EEF2F6',
@@ -975,6 +1425,25 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     paddingHorizontal: 20,
     paddingBottom: 12,
+  },
+  // chat header: title on the left, 🔄 New chat on the right
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingRight: 16,
+  },
+  newChatButton: {
+    backgroundColor: '#E2E8F0',
+    borderRadius: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginBottom: 12, // line up with the header's paddingBottom
+  },
+  newChatText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#334155',
   },
   list: {
     padding: 16,
@@ -1030,14 +1499,57 @@ const styles = StyleSheet.create({
   },
   // chat input bar
   inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
+    gap: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
+  },
+  inputControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  pendingImageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 8,
+  },
+  pendingImagePreview: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+  },
+  pendingImageMeta: {
+    flex: 1,
+  },
+  pendingImageTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  pendingImageSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  pendingImageRemoveBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
+  },
+  pendingImageRemoveText: {
+    fontSize: 16,
+    color: '#334155',
+    fontWeight: '700',
   },
   iconButton: {
     width: 48,
@@ -1169,6 +1681,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94A3B8',
     textAlign: 'center',
+  },
+  scanButton: {
+    backgroundColor: '#0EA5A5',
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  scanButtonDisabled: {
+    opacity: 0.65,
+  },
+  scanButtonText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  scanResultBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    backgroundColor: '#F0FDFA',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   button: {
     backgroundColor: '#2563EB',

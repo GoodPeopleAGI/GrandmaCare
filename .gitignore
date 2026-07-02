@@ -5,6 +5,9 @@
 !.env.example
 
 # ───────── Python (backend) ─────────
+# Agno session store (users/sessions/runs). Local, per-machine — don't commit.
+# (Also matched by *.db below, but named here so it's obvious.)
+grandmacare.db
 .venv/
 venv/
 __pycache__/
@@ -15,6 +18,8 @@ __pycache__/
 
 # ───────── Cognee local data (on-disk stores) ─────────
 .cognee/
+.cognee_home/
+.artifacts/
 cognee_system/
 cognee_data/
 .cognee_system/
@@ -26,6 +31,7 @@ databases/
 *.lance/
 .lancedb/
 *.kuzu/
+.artifacts/
 
 # ───────── Node / Expo (mobile/ also has its own .gitignore) ─────────
 node_modules/

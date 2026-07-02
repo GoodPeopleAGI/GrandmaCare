@@ -1,0 +1,31 @@
+[project]
+name = "grandmacare"
+version = "0.1.0"
+description = "Eldercare companion with a Cognee-powered health memory graph — Agno agent backend for the GrandmaCare Expo app."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # Agent framework + AgentOS server. The `os` extra pulls in FastAPI/uvicorn
+    # bits AgentOS needs; `agno.tools.mcp` additionally needs the `mcp` package.
+    "agno[os]==2.6.20",
+    "mcp==1.28.1",
+    # Ollama client — the agent's model (gemma4:31b-cloud) talks to the local
+    # Ollama daemon through this.
+    "ollama==0.6.2",
+    # Cognee: the health memory (graph + vector). cognee_ui.py runs its backend
+    # + web UI; the agent reaches it over MCP, never importing it directly.
+    "cognee==1.2.2",
+    # ASGI server for app.py (AgentOS on :7777).
+    "uvicorn==0.49.0",
+]
+
+# NOTE — cognee-mcp is intentionally NOT listed here. It's a RUNTIME TOOL, not a
+# library: cognee_mcp.py launches it with `uvx cognee-mcp ...`, which fetches it
+# into its own isolated environment. Installing it into this venv would pull in
+# its own pinned cognee version and could clobber our cognee==1.2.2. Treat it
+# like ngrok/Ollama — an external process, documented in the README, run via uvx.
+
+# Flat collection of scripts (app.py, cognee_ui.py, ...), not an importable
+# package — tell uv not to try to build/install the project itself.
+[tool.uv]
+package = false
