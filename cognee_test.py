@@ -4,10 +4,10 @@ cognee_test.py — a standalone SMOKE TEST for the Cognee setup.
 ⚠️  DESTRUCTIVE: this WIPES ALL cognee data (forget everything) and rebuilds
 a small fake-patient graph from scratch. Do NOT run it once the real app has
 patient data you care about. To just LOOK at the current data, use
-cognee_ui.py instead — it's read-only.
+cognee_ui.py instead — it never wipes anything.
 
 NOTE: this test uses cognee's DEFAULT store location, NOT the app's
-./.cognee/ store (cognee_layer sets that) — so it shouldn't touch app data,
+./.cognee/ store (cognee_config sets that) — so it shouldn't touch app data,
 but don't rely on it: the wipe is still global for whatever store it hits.
 
 Run:

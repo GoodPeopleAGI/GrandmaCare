@@ -169,9 +169,11 @@ expo-speech · expo-image-picker
   ollama pull embeddinggemma:300m
   # gemma4:31b-cloud runs on Ollama Cloud via your signed-in daemon (no local pull)
   ```
-- **Node.js** — Cognee's web UI runs `npm install` on first launch.
-- For the mobile app: Node 18+, [pnpm](https://pnpm.io/installation), an
-  [Expo account](https://expo.dev/signup), and EAS CLI (`npm i -g eas-cli`).
+- **Node.js 18+** and [**pnpm**](https://pnpm.io/installation) — Cognee's web UI
+  installs its frontend on first launch (`cognee_ui.py` routes those installs
+  through pnpm), and the mobile app uses pnpm too.
+- For the mobile app additionally: an [Expo account](https://expo.dev/signup)
+  and EAS CLI (`npm i -g eas-cli`).
 
 ### Backend
 
@@ -221,7 +223,7 @@ pnpm install
 # Build the dev client ONCE — call-style alarms (Notifee) can't run in Expo Go.
 eas build --profile development --platform android
 
-# Then day-to-day just start the dev server and open "GrandmaCare (dev)":
+# Then day-to-day just start the dev server and open the GrandmaCare app:
 pnpm start
 ```
 
