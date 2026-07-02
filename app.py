@@ -14,13 +14,23 @@ Start order (three terminals):
 Run:  python app.py   (or: uv run app.py)
 """
 
+import os
+
 from agno.os import AgentOS
+from fastapi.staticfiles import StaticFiles
 
 from agents import agent
 
 
 agentos = AgentOS(agents=[agent])
 app = agentos.get_app()
+
+# Browser demo — a 1:1 clone of the mobile app (web/), served from THIS
+# server so it shares the API's origin: no CORS setup needed (agno ships
+# none), and the same ngrok tunnel exposes it at https://<id>.../web for
+# anyone to try without building the mobile app.
+_WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+app.mount("/web", StaticFiles(directory=_WEB_DIR, html=True), name="web")
 
 
 # ─────────────────────────────────────────────────────────────

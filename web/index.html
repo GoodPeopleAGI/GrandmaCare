@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>GrandmaCare</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Phone-shaped column; everything lives inside. -->
+  <div id="root">
+
+    <!-- Splash: shown until localStorage state is loaded. -->
+    <div id="splash" class="splash">
+      <div class="spinner spinner-lg blue"></div>
+    </div>
+
+    <!-- Caregiver settings (hidden; long-press the Chat tab to open). -->
+    <div id="settingsScreen" class="settings-screen" hidden>
+      <div class="settings-title">⚙️ Caregiver settings</div>
+      <div class="settings-hint">
+        These IDs decide which conversation and memory the app talks to.
+        Only change them if you know what you're doing.
+      </div>
+      <label class="edit-label" for="settingsUser">User ID</label>
+      <input id="settingsUser" class="edit-input" type="text" />
+      <label class="edit-label" for="settingsSession">Session ID</label>
+      <input id="settingsSession" class="edit-input" type="text" />
+      <label class="edit-label" for="settingsBackend">Backend URL</label>
+      <input id="settingsBackend" class="edit-input" type="text"
+             placeholder="(same server as this page)" />
+      <button id="settingsSave" class="settings-save-btn">Save</button>
+      <button id="settingsNew" class="settings-new-btn">🔄 Start new conversation</button>
+      <button id="settingsClose" class="settings-close-btn">Close</button>
+    </div>
+
+    <!-- Alarm "call" screen (dark, full-screen). -->
+    <div id="alarmScreen" class="alarm-screen" hidden>
+      <div class="alarm-emoji">💊</div>
+      <div class="alarm-call-title">Medicine reminder</div>
+      <div id="alarmMedName" class="alarm-call-med"></div>
+      <div id="alarmMedDose" class="alarm-call-dose"></div>
+      <div id="alarmMedInstr" class="alarm-call-instr"></div>
+      <button id="alarmDone" class="alarm-done-btn">✅ I took it</button>
+      <button id="alarmRepeat" class="alarm-repeat-btn">🔊 Say it again</button>
+    </div>
+
+    <!-- Tabbed UI -->
+    <div id="tabs" class="tabs" hidden>
+
+      <!-- 💊 Meds screen -->
+      <div id="medsScreen" class="screen">
+        <div class="header">Today's Medicines</div>
+        <div id="medsList" class="list scroll"></div>
+        <div id="manageHint" class="manage-hint" hidden>
+          Press and hold a medicine to edit or delete it.
+        </div>
+      </div>
+
+      <!-- 💬 Chat screen -->
+      <div id="chatScreen" class="screen" hidden>
+        <div class="header-row">
+          <div class="header">Chat</div>
+          <button id="newChatBtn" class="new-chat-button">🔄 New chat</button>
+        </div>
+        <div id="chatList" class="chat-list scroll"></div>
+        <div class="input-bar">
+          <div id="pendingImageRow" class="pending-image-row" hidden>
+            <img id="pendingImagePreview" class="pending-image-preview" alt="" />
+            <div class="pending-image-meta">
+              <div class="pending-image-title">Photo attached</div>
+              <div class="pending-image-subtitle">Add a caption, then send</div>
+            </div>
+            <button id="pendingImageRemove" class="pending-image-remove-btn">✕</button>
+          </div>
+          <div class="input-controls-row">
+            <button id="attachBtn" class="icon-button"><span class="icon-text">📷</span></button>
+            <textarea id="chatInput" class="input" rows="1"
+                      placeholder="Type a message…"></textarea>
+            <button id="sendBtn" class="send-button"><span id="sendBtnLabel">➤</span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom tab bar -->
+      <div class="tab-bar">
+        <button id="tabMeds" class="tab-button">
+          <span class="tab-icon">💊</span>
+          <span class="tab-label active">Meds</span>
+        </button>
+        <button id="tabChat" class="tab-button">
+          <span class="tab-icon">💬</span>
+          <span class="tab-label">Chat</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal dialogs (replaces the app's native Alert.alert). -->
+    <div id="modalBackdrop" class="modal-backdrop" hidden>
+      <div class="modal">
+        <div id="modalTitle" class="modal-title"></div>
+        <div id="modalMessage" class="modal-message"></div>
+        <div id="modalButtons" class="modal-buttons"></div>
+      </div>
+    </div>
+
+    <!-- Hidden file inputs: "camera" (capture) and gallery. -->
+    <input id="filePickCamera" type="file" accept="image/*" capture="environment" hidden />
+    <input id="filePickGallery" type="file" accept="image/*" hidden />
+  </div>
+
+  <script src="marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

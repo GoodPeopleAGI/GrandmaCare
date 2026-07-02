@@ -21,10 +21,20 @@ from tools import create_medication_cards
 cognee_memory = MCPTools(
     transport="streamable-http",
     url="http://localhost:8001/mcp",
-    # Whitelist: read/write only. The destructive cognee tools (forget,
-    # delete, prune, ...) are deliberately NOT exposed to the model — one
-    # hallucinated call could wipe the whole health record.
-    include_tools=["remember", "recall", "search"],
+    # Whitelist: everything non-destructive. The destructive cognee tools
+    # (forget_memory, delete, delete_dataset, prune) are deliberately NOT
+    # exposed to the model — one hallucinated call could wipe the whole
+    # health record. cognify is also excluded: it's a second save-path next
+    # to remember, and giving the model two ways to save invites confusion.
+    include_tools=[
+        "remember",          # save a health fact → knowledge graph
+        "recall",            # answer from the stored record
+        "search",            # raw graph/vector search
+        "save_interaction",  # save a whole conversation → graph (runs in background)
+        "improve",           # consolidate cached sessions into the graph
+        "list_data",         # read-only: what's stored
+        "cognify_status",    # read-only: is the graph pipeline done
+    ],
     # Re-ping and re-list tools each run, so an MCP proxy restart (or it
     # starting after app.py) doesn't leave the agent memory-less.
     refresh_connection=True,
@@ -71,6 +81,11 @@ agent = Agent(
         "whether something is safe for them, call `recall` with a clear question "
         "and base your answer ONLY on what it returns. If it returns nothing "
         "relevant, say you have no record of it — never invent medical facts.\n"
+        "SAFETY CHECK: whenever a NEW medicine appears (a photo is being verified, "
+        "a prescription is shared, or the user mentions starting one), you MUST "
+        "call `recall` asking for the patient's allergies and current medicines, "
+        "then warn clearly and gently if the new medicine could conflict with "
+        "either. If recall returns no allergies, say you have no allergy on record.\n"
         "\n"
         "STEP 3 — MEDICATION CARDS (tool: create_medication_cards). When a "
         "prescription is shared or a regularly-taken medicine is identified, you "
@@ -79,7 +94,20 @@ agent = Agent(
         "one short friendly confirmation — never repeat the raw card data.\n"
         "\n"
         "STEP 4 — REPLY in plain, warm, simple language: short sentences, no "
-        "jargon, no technical talk about tools or saving. Just be kind and clear."
+        "jargon, no technical talk about tools or saving. Just be kind and clear.\n"
+        "\n"
+        "STEP 5 — SAVE THE VISIT (tool: save_interaction). When the conversation "
+        "is clearly ending — the user says goodbye, goodnight, or thanks and has "
+        "no more questions — call `save_interaction` ONCE with a short summary of "
+        "the whole visit for the doctor: what the patient asked or reported, what "
+        "advice you gave, and how they seemed. Write it in third person. Do NOT "
+        "call it after every message — only when the chat wraps up.\n"
+        "Example: save_interaction(data=\"Visit on 2026-07-03: The patient asked "
+        "about dizziness after breakfast. Advised to sit down, drink water, and "
+        "mention it to the doctor. Patient sounded calm and said good night.\")\n"
+        "\n"
+        "OTHER TOOLS (only if asked): `list_data` when the user asks what is on "
+        "record; `cognify_status` when they ask if their record is up to date."
     ),
     markdown=True,
     add_history_to_context=True,

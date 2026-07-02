@@ -12,6 +12,15 @@ Runs via uvx in an ISOLATED environment on purpose: cognee-mcp pins its own
 cognee version, and installing it into this project's venv could clobber
 our cognee 1.2.2.
 
+VERSION NOTE: the released cognee-mcp 0.5.4 accepts session_id on
+remember/recall but silently DROPS it in --api-url mode (never puts it in
+the HTTP payload) — fixed on their main branch, but running main was tried
+(2026-07-02) and its server HANGS on ListToolsRequest against agno's MCP
+client, so we stay on the release. Cost: `recall` can't search the current
+session first (falls back to plain graph recall — still correct). The
+session dashboard is unaffected (that capture goes over REST, not MCP).
+When cognee-mcp > 0.5.4 ships, just bump: uvx picks up the new release.
+
 Run:  uv run cognee_mcp.py   (after cognee_ui.py is up)
 """
 

@@ -141,7 +141,8 @@ HTTP/MCP client, avoids that entirely.
 ├── cognee_mcp.py     # cognee-mcp proxy launcher (uvx)                   :8001
 ├── cognee_test.py    # standalone Cognee smoke test (run alone)
 ├── pyproject.toml    # deps (uv); requirements.txt is generated from this
-├── mobile/           # Expo React Native app (dev build)
+├── mobile/           # Expo React Native app (dev build) — the real product
+├── web/              # browser demo: 1:1 clone of the app, served at :7777/web
 └── README.md
 ```
 
@@ -197,13 +198,23 @@ uv run app.py                # → AgentOS on :7777
 > so start `cognee_ui.py` first. (The agent re-checks its MCP connection each run,
 > so a late start self-heals — but clean order avoids a tools-less first boot.)
 
+### 🌐 Try it in the browser (no build needed)
+
+With the three terminals running, open **<http://localhost:7777/web>** — a 1:1
+web clone of the mobile app (chat, scanning via file upload, medication cards,
+reminders as browser notifications), served straight from the agent server.
+Perfect for a quick look without building the Android app; the mobile app is
+still the full experience (real full-screen call alarms, camera scanning).
+
 Expose the agent to your phone with **ngrok** (tunnel **7777**, not 8000):
 
 ```bash
 ngrok http 7777
 ```
 
-Put the `https://….ngrok-free.app` URL into `mobile/.env` (see below).
+Put the `https://….ngrok-free.app` URL into `mobile/.env` (see below) — and
+share `https://….ngrok-free.app/web` with anyone who wants to try the browser
+demo.
 
 > **Dependencies:** managed via `pyproject.toml` + `uv.lock`. Add a dep with
 > `uv add <pkg>`; `requirements.txt` (for non-uv users) is regenerated with
@@ -235,3 +246,11 @@ changes hot-reload like Expo Go.
 GrandmaCare is **informational only** and **not a medical device**. It does not
 diagnose, treat, or replace a doctor. Always consult a healthcare professional. In
 an emergency, call local emergency services.
+
+## 🤖 AI disclosure
+
+Parts of this project were built with the help of AI coding assistants:
+[@claude](https://github.com/claude) via [Claude Code](https://claude.com/claude-code)
+(Claude Opus 4.8 and Fable 5) and [@copilot](https://github.com/copilot) (GitHub
+Copilot, auto model selection). All AI-generated code was reviewed, tested, and
+integrated by the team.

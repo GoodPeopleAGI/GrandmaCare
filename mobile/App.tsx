@@ -211,7 +211,8 @@ function toAlarmMed(med: Medication): AlarmMed {
 // Ask the backend agent to verify a medicine photo against a card.
 async function analyzeMedicationPhoto(
   expected: Medication,
-  imageUri: string
+  imageUri: string,
+  ids: { userId: string; sessionId: string }
 ): Promise<string> {
   const prompt = [
     'You are helping verify a medicine from a caregiver app.',
@@ -224,12 +225,13 @@ async function analyzeMedicationPhoto(
     '2) What medicine this most likely is',
     '3) When it should be taken',
     '4) Any safety warning if uncertain',
+    '5) Safety: check her stored records for allergies or medicines that could interact with this one',
   ].join('\n');
 
-  // No session ids here: a one-off photo check doesn't need to join the
-  // chat's conversation history. (Cognee will own the "is this hers?"
-  // check later; for now this just asks the model about the photo.)
-  const { reply } = await sendToAgent(prompt, undefined, imageUri);
+  // Send WITH the session ids: the safety check (item 5) makes the agent
+  // recall her allergies/medicines from Cognee, and the exchange itself
+  // gets captured into the session record.
+  const { reply } = await sendToAgent(prompt, ids, imageUri);
   return reply;
 }
 
@@ -251,10 +253,12 @@ function MedicationCard({
   med,
   onEdit,
   onDelete,
+  ids,
 }: {
   med: Medication;
   onEdit: (updated: Medication) => void;
   onDelete: (id: string) => void;
+  ids: { userId: string; sessionId: string };
 }) {
   const [taken, setTaken] = useState(false);
   const [alarms, setAlarms] = useState<AlarmEntry[]>([]);
@@ -408,7 +412,7 @@ function MedicationCard({
       if (!uri) return;
 
       setScanning(true);
-      const reply = await analyzeMedicationPhoto(med, uri);
+      const reply = await analyzeMedicationPhoto(med, uri, ids);
       setScanResult(reply);
       Alert.alert('Scan complete', 'AI analysis was added under this medicine card.');
     } catch (e) {
@@ -587,10 +591,12 @@ function MedicinesScreen({
   meds,
   onEdit,
   onDelete,
+  ids,
 }: {
   meds: Medication[];
   onEdit: (updated: Medication) => void;
   onDelete: (id: string) => void;
+  ids: { userId: string; sessionId: string };
 }) {
   return (
     <View style={styles.screen}>
@@ -602,7 +608,7 @@ function MedicinesScreen({
           </Text>
         ) : (
           meds.map((med) => (
-            <MedicationCard key={med.id} med={med} onEdit={onEdit} onDelete={onDelete} />
+            <MedicationCard key={med.id} med={med} onEdit={onEdit} onDelete={onDelete} ids={ids} />
           ))
         )}
       </ScrollView>
@@ -1316,7 +1322,7 @@ export default function App() {
         />
       </View>
       <View style={[styles.screenSlot, tab !== 'meds' && styles.hidden]}>
-        <MedicinesScreen meds={meds} onEdit={editMed} onDelete={deleteMed} />
+        <MedicinesScreen meds={meds} onEdit={editMed} onDelete={deleteMed} ids={{ userId, sessionId }} />
       </View>
 
       {/* the bottom tab bar */}
