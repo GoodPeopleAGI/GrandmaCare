@@ -228,11 +228,9 @@ changes hot-reload like Expo Go.
 ### 🌐 Try it in the browser (fallback / no Expo build)
 
 If you do not have time to build and test the Expo app, with the three
-terminals running you can open **<http://localhost:7777/web>** — a 1:1 web
-clone of the mobile app (chat, scanning via file upload, medication cards,
-reminders as browser notifications), served straight from the agent server.
+terminals running you can open **<http://localhost:7777/web>**.
 Use this as the backup option; the Expo app above is still the primary, full
-experience (real full-screen call alarms, camera scanning).
+experience.
 
 Expose the agent to your phone with **ngrok** (tunnel **7777**, not 8000):
 
