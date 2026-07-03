@@ -238,9 +238,9 @@ Expose the agent to your phone with **ngrok** (tunnel **7777**, not 8000):
 ngrok http 7777
 ```
 
-Put the `https://….ngrok-free.app` URL into `mobile/.env` (see above) — and
-share `https://….ngrok-free.app/web` with anyone who wants to try the browser
-demo instead.
+Put the `https://….ngrok-free.app` URL into `mobile/.env` using
+`mobile/.env.example` — and share `https://….ngrok-free.app/web` with anyone
+who wants to try the browser demo instead.
 
 > **Dependencies:** managed via `pyproject.toml` + `uv.lock`. Add a dep with
 > `uv add <pkg>`; `requirements.txt` (for non-uv users) is regenerated with
