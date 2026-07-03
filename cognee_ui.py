@@ -52,6 +52,13 @@ with open(os.path.join(_shim_dir, "npm.cmd"), "w", encoding="ascii") as f:
     f.write("@echo off\r\npnpm %*\r\n")
 os.environ["PATH"] = _shim_dir + os.pathsep + os.environ.get("PATH", "")
 
+# pnpm blocks dependency postinstall scripts it hasn't been approved to run
+# (sharp, unrs-resolver) — a warning on pnpm 10, but a hard install failure
+# (ERR_PNPM_IGNORED_BUILDS) on pnpm 11. The interactive `pnpm approve-builds`
+# can't run inside cognee's subprocess, so approve via env config instead.
+# Scoped to this process; older pnpm versions ignore the unknown setting.
+os.environ["npm_config_dangerously_allow_all_builds"] = "true"
+
 # Tell the frontend where the backend is. start_ui passes backend_port to the
 # backend but never to the frontend, which reads this env var (default is
 # already 8000 — set explicitly so it can't drift).
