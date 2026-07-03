@@ -225,7 +225,7 @@ pnpm start
 You only **rebuild** when adding a native library or changing `app.json`; pure-JS
 changes hot-reload like Expo Go.
 
-### 🌐 Try it in the browser (fallback / no Expo build)
+### Try it in the browser (fallback / no Expo build)
 
 If you do not have time to build and test the Expo app, with the three
 terminals running you can open **<http://localhost:7777/web>**.
