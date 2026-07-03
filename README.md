@@ -204,28 +204,6 @@ uv run app.py                # → AgentOS on :7777
 > so start `cognee_ui.py` first. (The agent re-checks its MCP connection each run,
 > so a late start self-heals — but clean order avoids a tools-less first boot.)
 
-### 🌐 Try it in the browser (no build needed)
-
-With the three terminals running, open **<http://localhost:7777/web>** — a 1:1
-web clone of the mobile app (chat, scanning via file upload, medication cards,
-reminders as browser notifications), served straight from the agent server.
-Perfect for a quick look without building the Android app; the mobile app is
-still the full experience (real full-screen call alarms, camera scanning).
-
-Expose the agent to your phone with **ngrok** (tunnel **7777**, not 8000):
-
-```bash
-ngrok http 7777
-```
-
-Put the `https://….ngrok-free.app` URL into `mobile/.env` (see below) — and
-share `https://….ngrok-free.app/web` with anyone who wants to try the browser
-demo.
-
-> **Dependencies:** managed via `pyproject.toml` + `uv.lock`. Add a dep with
-> `uv add <pkg>`; `requirements.txt` (for non-uv users) is regenerated with
-> `uv export --no-hashes --no-emit-project -o requirements.txt`.
-
 ### Mobile (Expo dev build)
 
 ```bash
@@ -246,6 +224,27 @@ pnpm start
 
 You only **rebuild** when adding a native library or changing `app.json`; pure-JS
 changes hot-reload like Expo Go.
+
+### Try it in the browser (fallback / no Expo build)
+
+If you do not have time to build and test the Expo app, with the three
+terminals running you can open **<http://localhost:7777/web>**.
+Use this as the backup option; the Expo app above is still the primary, full
+experience.
+
+Expose the agent to your phone with **ngrok** (tunnel **7777**, not 8000):
+
+```bash
+ngrok http 7777
+```
+
+Put the `https://….ngrok-free.app` URL into `mobile/.env` using
+`mobile/.env.example` — and share `https://….ngrok-free.app/web` with anyone
+who wants to try the browser demo instead.
+
+> **Dependencies:** managed via `pyproject.toml` + `uv.lock`. Add a dep with
+> `uv add <pkg>`; `requirements.txt` (for non-uv users) is regenerated with
+> `uv export --no-hashes --no-emit-project -o requirements.txt`.
 
 ## ⚠️ Disclaimer
 
